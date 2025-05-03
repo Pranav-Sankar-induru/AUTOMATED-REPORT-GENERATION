@@ -1,0 +1,205 @@
+"""
+Student Score Analysis Report
+-----------------------------
+Processes student score data from CSV and generates a PDF report with statistics.
+"""
+
+import os
+import csv
+import statistics
+from datetime import datetime
+from typing import List, Tuple, Dict
+
+import matplotlib.pyplot as plt
+from fpdf import FPDF
+
+
+class DataHandler:
+    """Handles all data reading and validation operations"""
+    
+    @staticmethod
+    def read_student_scores(filepath: str) -> List[Tuple[str, float]]:
+        """
+        Reads student data from CSV file
+        Returns list of (name, score) tuples
+        """
+        student_data = []
+        
+        try:
+            with open(filepath, newline='', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                
+                for row in reader:
+                    try:
+                        name = row['Name'].strip()
+                        score = float(row['Score'])
+                        student_data.append((name, score))
+                    except (ValueError, KeyError):
+                        print(f"Skipping invalid record: {row}")
+                        
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Data file not found: {filepath}")
+            
+        return student_data
+
+
+class ScoreAnalyzer:
+    """Performs statistical analysis on student scores"""
+    
+    @staticmethod
+    def calculate_statistics(scores: List[float]) -> Dict[str, float]:
+        """Computes various statistical measures from scores"""
+        stats = {
+            "Total Students": len(scores),
+            "Mean": statistics.mean(scores),
+            "Median": statistics.median(scores),
+            "Max": max(scores),
+            "Min": min(scores),
+            "Range": max(scores) - min(scores)
+        }
+        
+        # Only calculate these if they make sense for the data
+        if len(scores) > 1:
+            stats["Standard Deviation"] = statistics.stdev(scores)
+            
+        if len(set(scores)) < len(scores):
+            stats["Mode"] = statistics.mode(scores)
+        else:
+            stats["Mode"] = "No unique mode"
+            
+        if len(scores) >= 4:
+            quantiles = statistics.quantiles(scores, n=4)
+            stats["Q1 (25%)"] = quantiles[0]
+            stats["Q3 (75%)"] = quantiles[2]
+            
+        return stats
+
+
+class VisualizationEngine:
+    """Handles creation of data visualizations"""
+    
+    @staticmethod
+    def create_score_chart(student_data: List[Tuple[str, float]], 
+                          output_path: str) -> None:
+        """
+        Generates and saves a bar chart of student scores
+        """
+        names, scores = zip(*student_data)
+        
+        plt.figure(figsize=(10, 6))
+        plt.bar(names, scores, color='skyblue', alpha=0.7)
+        
+        plt.title("Student Score Distribution", pad=20)
+        plt.xlabel("Student Name")
+        plt.ylabel("Score")
+        plt.xticks(rotation=45, ha='right')
+        
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+
+class ReportBuilder(FPDF):
+    """Generates the PDF report with data and visualizations"""
+    
+    def __init__(self, title: str):
+        super().__init__()
+        self.title = title
+        self.set_auto_page_break(auto=True, margin=15)
+        
+    def header(self) -> None:
+        """PDF header configuration"""
+        self.set_font("Arial", "B", 16)
+        self.cell(0, 10, self.title, ln=True, align="C")
+        self.ln(10)
+        
+    def footer(self) -> None:
+        """PDF footer configuration"""
+        self.set_y(-15)
+        self.set_font("Arial", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+        
+    def add_data_table(self, student_data: List[Tuple[str, float]]) -> None:
+        """Adds student data table to PDF"""
+        self.set_font("Arial", "B", 12)
+        self.cell(90, 10, "Student Name", border=1, align="C")
+        self.cell(50, 10, "Score", border=1, align="C", ln=1)
+        
+        self.set_font("Arial", "", 11)
+        for name, score in student_data:
+            self.cell(90, 8, name, border=1)
+            self.cell(50, 8, f"{score:.2f}", border=1, ln=1)
+            
+    def add_statistics(self, stats: Dict[str, float]) -> None:
+        """Adds statistical analysis to PDF"""
+        self.ln(10)
+        self.set_font("Arial", "B", 14)
+        self.cell(0, 10, "Statistical Analysis", ln=1)
+        
+        self.set_font("Arial", "", 12)
+        for stat, value in stats.items():
+            self.cell(0, 8, f"{stat}: {value}", ln=1)
+            
+    def add_visualization(self, image_path: str) -> None:
+        """Adds score chart to PDF"""
+        self.ln(10)
+        self.set_font("Arial", "B", 14)
+        self.cell(0, 10, "Score Distribution", ln=1)
+        self.image(image_path, x=10, w=190)
+        
+    def add_report_footer(self) -> None:
+        """Adds timestamp to report"""
+        self.ln(10)
+        self.set_font("Arial", "I", 10)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.cell(0, 8, f"Report generated on: {timestamp}", ln=1)
+
+
+class ReportGenerator:
+    """Orchestrates the entire report generation process"""
+    
+    def __init__(self, data_file: str):
+        self.data_file = data_file
+        self.output_dir = "reports"
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+    def generate_report(self) -> None:
+        """Main method to generate the complete report"""
+        try:
+            # Load and validate data
+            student_data = DataHandler.read_student_scores(self.data_file)
+            if not student_data:
+                print("No valid student data found.")
+                return
+                
+            # Perform statistical analysis
+            scores = [score for _, score in student_data]
+            stats = ScoreAnalyzer.calculate_statistics(scores)
+            
+            # Create visualization
+            chart_path = os.path.join(self.output_dir, "scores_chart.png")
+            VisualizationEngine.create_score_chart(student_data, chart_path)
+            
+            # Generate PDF report
+            report = ReportBuilder("Student Performance Report")
+            report.add_page()
+            report.add_data_table(student_data)
+            report.add_statistics(stats)
+            report.add_visualization(chart_path)
+            report.add_report_footer()
+            
+            # Save the report
+            report_name = f"student_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+            report_path = os.path.join(self.output_dir, report_name)
+            report.output(report_path)
+            
+            print(f"Successfully generated report: {report_path}")
+            
+        except Exception as e:
+            print(f"Error generating report: {str(e)}")
+
+
+if __name__ == "__main__":
+    DATA_FILE = "student_scores.csv"  # Changed to more descriptive name
+    report_generator = ReportGenerator(DATA_FILE)
+    report_generator.generate_report()
